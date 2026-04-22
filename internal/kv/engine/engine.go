@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/inv-hemanthb/in-memory-db/internal/kv/store"
-	"github.com/inv-hemanthb/in-memory-db/internal/transport/tcp"
+	"github.com/inv-hemanthb/in-memory-db/internal/parser"
 )
 
 type EngineStatus int
@@ -46,15 +46,15 @@ func New(kvStore *store.KVStore) *Engine {
 	return &Engine{store: kvStore}
 }
 
-func (engine *Engine) ExecuteCommand(cmd tcp.Command) EngineResult {
+func (engine *Engine) ExecuteCommand(cmd parser.Command) EngineResult {
 	switch cmd.Type {
-	case tcp.CmdSet:
+	case parser.CmdSet:
 		return engine.handleSet(cmd.Key, cmd.Value, cmd.TTL)
-	case tcp.CmdGet:
+	case parser.CmdGet:
 		return engine.handleGet(cmd.Key)
-	case tcp.CmdDelete:
+	case parser.CmdDelete:
 		return engine.handleDelete(cmd.Key)
-	case tcp.CmdClear:
+	case parser.CmdClear:
 		return engine.handleClear()
 	default:
 		return EngineResult{Status: EngineError, ErrorMessage: "Unknown command"}
