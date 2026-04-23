@@ -160,6 +160,66 @@ func createTestCases() []TestCase {
 			Input:     `SET "key" VALUE value`,
 			ExpectErr: true,
 		},
+		{
+			Name:      "empty input",
+			Input:     "",
+			ExpectErr: true,
+		},
+		{
+			Name:      "unknown command",
+			Input:     `FOO "bar"`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "invalid escape at end",
+			Input:     `SET "k" VALUE "abc\`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "unterminated string",
+			Input:     `SET "k" VALUE "abc`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "SET too few tokens",
+			Input:     `SET "k"`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "SET invalid token count",
+			Input:     `SET "k" VALUE "v" TTL`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "TTL not quoted",
+			Input:     `SET "k" VALUE "v" TTL 10`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "GET too many args",
+			Input:     `GET "k" "extra"`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "GET unquoted key",
+			Input:     `GET k`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "DELETE too many args",
+			Input:     `DELETE "k" "extra"`,
+			ExpectErr: true,
+		},
+		{
+			Name:      "DELETE unquoted key",
+			Input:     `DELETE k`,
+			ExpectErr: true,
+		},
+		{
+			Name:  "trailing whitespace edge",
+			Input: `SET "k" VALUE "v"    `,
+			Want:  Command{Type: CmdSet, Key: "k", Value: []byte("v")},
+		},
 	}
 
 	return tests
@@ -182,5 +242,31 @@ func TestParse(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestParseError_Error(t *testing.T) {
+	err := &ParseError{Message: "test error"}
+	if err.Error() != "test error" {
+		t.Fatalf("unexpected error string")
+	}
+}
+
+func TestCommandType_String(t *testing.T) {
+	tests := []struct {
+		ct   CommandType
+		want string
+	}{
+		{CmdSet, "SET"},
+		{CmdGet, "GET"},
+		{CmdDelete, "DELETE"},
+		{CmdClear, "CLEAR"},
+		{CommandType(999), "UNKNOWN"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.ct.String(); got != tt.want {
+			t.Fatalf("got %s, want %s", got, tt.want)
+		}
 	}
 }
