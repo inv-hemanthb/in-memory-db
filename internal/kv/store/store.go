@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+type TimeProvider interface {
+	Now() time.Time
+	Add(d time.Duration) time.Time
+}
+
 // the calling backend server should deal with parsing the value to required type
 type storeEntry struct {
 	value     []byte
@@ -14,20 +19,22 @@ type storeEntry struct {
 type KVStore struct {
 	mutex sync.RWMutex
 	store map[string]storeEntry
+	Tp    TimeProvider
 }
 
-func New() *KVStore {
+func New(tp TimeProvider) *KVStore {
 	return &KVStore{
 		store: make(map[string]storeEntry),
+		Tp:    tp,
 	}
 }
 
-func (entry *storeEntry) isExpired() bool {
+func (kvs *KVStore) isExpired(entry storeEntry) bool {
 	if entry.expiresAt == 0 {
 		return false
 	}
 
-	return entry.expiresAt <= time.Now().UnixNano()
+	return entry.expiresAt <= kvs.Tp.Now().UnixNano()
 }
 
 // returns true on success, false otherwise
@@ -40,7 +47,7 @@ func (kvs *KVStore) Get(key string) ([]byte, bool) {
 		return nil, false
 	}
 
-	if entry.isExpired() {
+	if kvs.isExpired(entry) {
 		kvs.mutex.Lock()
 		// recheck for avoiding race conditions
 		if current, stillExists := kvs.store[key]; stillExists {

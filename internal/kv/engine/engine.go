@@ -66,7 +66,7 @@ func (engine *Engine) handleSet(key string, value []byte, ttl *int64) EngineResu
 		engine.store.Set(key, value, 0)
 		return EngineResult{Status: EngineSuccess}
 	}
-	expiresAt := time.Now().Add(time.Duration(*ttl) * time.Second).UnixNano()
+	expiresAt := engine.store.Tp.Now().Add(time.Duration(*ttl) * time.Second).UnixNano()
 	engine.store.Set(key, value, expiresAt)
 
 	return EngineResult{Status: EngineSuccess}

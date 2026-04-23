@@ -7,11 +7,13 @@ import (
 	"github.com/inv-hemanthb/in-memory-db/internal/kv/store"
 	"github.com/inv-hemanthb/in-memory-db/internal/logger"
 	"github.com/inv-hemanthb/in-memory-db/internal/parser"
+	"github.com/inv-hemanthb/in-memory-db/internal/timeprovider"
 )
 
 func main() {
 	log := logger.New(os.Stdout, logger.LevelTrace, true)
-	kvStore := store.New()
+	tp := timeprovider.New()
+	kvStore := store.New(tp)
 	kvEngine := engine.New(kvStore)
 
 	commandStrs := []string{
