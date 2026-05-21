@@ -67,13 +67,13 @@ type TCPServer struct {
 	shuttingDown atomic.Bool
 }
 
-func New(addr string, logger Logger) *TCPServer {
-	return NewWithConfig(addr, logger, DefaultConfig(), HandleCommandStr)
+func New(addr string, logger Logger, handler Handler) *TCPServer {
+	return NewWithConfig(addr, logger, DefaultConfig(), handler)
 }
 
 func NewWithConfig(addr string, logger Logger, config Config, handler Handler) *TCPServer {
 	if handler == nil {
-		handler = HandleCommandStr
+		panic("tcp: handler must not be nil")
 	}
 	return &TCPServer{
 		addr:    addr,
