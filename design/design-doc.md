@@ -72,6 +72,21 @@ Quoted strings; escapes `\"` and `\\`. Keywords (`SET`, `VALUE`, `TTL`, …) are
 |---------|--------|
 | Success | `SUCCESS: <payload>` |
 | Error | `ERROR: <message>` |
+| Line too long | `ERROR: line too long` |
+| Server at capacity | `ERROR: server busy` |
+
+**Transport limits**
+
+Server defaults (configurable):
+
+| Rule | Limit |
+|------|-------|
+| Max line size | 64 KiB (65536 bytes) per command line, excluding the trailing `\n` |
+| Read timeout | 30s per line read; no complete line in time → connection closed |
+| Write timeout | 10s per response write |
+| Idle timeout | 5m max connection lifetime from accept |
+| Max connections | 256 concurrent clients; additional connects get `ERROR: server busy` then close |
+| Shutdown | `SIGINT` / `SIGTERM` stops accept; in-flight requests have up to 10s to finish |
 
 ---
 
