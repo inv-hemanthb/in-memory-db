@@ -168,6 +168,22 @@ Partial unique index on `key` where `deleted_at IS NULL` — live keys are uniqu
 
 **Seed:** `go run ./cmd/seed` inserts rows (default 500; override with `SEED_COUNT` or `-count`). Skips if enough live rows already exist.
 
+### Store API (`internal/api/db`)
+
+Postgres-only CRUD on `items`. No KV logic.
+
+| Method | Purpose |
+|--------|---------|
+| `Create(ctx, key, value)` | Insert live row |
+| `GetByID(ctx, id)` | Read by id |
+| `GetByKey(ctx, key)` | Read by key |
+| `GetByIDAndKey(ctx, id, key)` | Read with both |
+| `Update(ctx, id, value)` | Update value by id |
+| `SoftDelete(ctx, id)` | Set `deleted_at` |
+| `HardDelete(ctx, id)` | Remove row |
+
+Errors: `ErrNotFound`, `ErrDuplicateKey`.
+
 ---
 
 ## Local runtime
