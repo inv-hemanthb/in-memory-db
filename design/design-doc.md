@@ -139,13 +139,42 @@ Entry point: `cmd/api`.
 | Package | Role |
 |---------|------|
 | `internal/db` | Shared Postgres connection; `.env` loading |
-| `internal/api/server` | HTTP routes; render templates; metrics state |
-| `internal/api/db` | CRUD queries on `items` (later) |
+| `internal/api` | HTTP server, handlers, `ItemService`, metrics (`package api`) |
+| `internal/api/db` | CRUD queries on `items` |
 | `internal/api/kvclient` | TCP client to In Memory DB |
 
-Serves HTML templates and static assets (Pico.css). HTMX drives dynamic fragments without a separate frontend build.
+Serves HTML (minimal snippets until templates). HTMX UI planned for a later step.
 
 Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
+
+### HTTP routes
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/` | Health placeholder |
+| `POST` | `/items` | Create (`key`, `value`, `with_kv`) |
+| `GET` | `/items/read` | Read by `id`, `key`, or both (`with_kv` query) |
+| `POST` | `/items/update` | Update (`id`, `value`, `with_kv`) |
+| `POST` | `/items/delete` | Soft/hard delete (`id`, `hard`, `with_kv`) |
+| `POST` | `/cache/clear` | Clear KV store |
+
+Config: `API_PORT` (default `8080`), `DATABASE_URL`, `KV_ADDR`.
+
+### ItemService (`internal/api`)
+
+Cache-aside orchestration over `Store` + `kvclient`. Cache key: `item:{id}`. Cached value: item `value` string.
+
+| Method | with_kv=false | with_kv=true |
+|--------|---------------|--------------|
+| Create | PG insert | PG insert → KV SET |
+| Read | PG only | KV GET → miss → PG → KV SET |
+| Update | PG update | PG update → KV SET |
+| Delete | PG soft/hard delete | PG delete → KV DELETE |
+| ClearCache | — | KV CLEAR |
+
+### Metrics (`internal/api`)
+
+In-memory per process: last op latency, op type, cache hit/miss, running count/average, recent 20 entries. Recorded by handlers after each request.
 
 ### KV Client API (`internal/api/kvclient`)
 
