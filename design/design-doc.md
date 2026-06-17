@@ -147,6 +147,19 @@ Serves HTML templates and static assets (Pico.css). HTMX drives dynamic fragment
 
 Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
 
+### KV Client API (`internal/api/kvclient`)
+
+TCP client to the In Memory DB. Config: `KV_ADDR` (default `localhost:55555`). One connection per call.
+
+| Method | Wire command |
+|--------|--------------|
+| `Set(ctx, key, value)` | `SET "key" VALUE "value"` |
+| `Get(ctx, key)` | `GET "key"` |
+| `Delete(ctx, key)` | `DELETE "key"` |
+| `Clear(ctx)` | `CLEAR` |
+
+Errors: `ErrNotFound` (GET miss), `ErrServerBusy`.
+
 ---
 
 ## Postgres schema
