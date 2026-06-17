@@ -4,6 +4,10 @@
 
 Go learning project: custom in-memory key-value database and a driver web application. Linux only.
 
+**In Memory DB is complete and immutable** — protocol, engine, and TCP service are not changing. All new work is the driver web application and its integration with Postgres and the KV service.
+
+**Purpose of the web application:** a manual CRUD test bed (not a product demo, not automated load simulation). The user performs create/read/update/delete operations by hand in the UI and compares latency with KV caching enabled vs Postgres alone. Repeated manual reads naturally show cold-cache (miss → PG) vs warm-cache (hit → KV) behavior. No authentication.
+
 ---
 
 ## System
@@ -18,7 +22,7 @@ Four components and one shared utility, as in the diagram:
 | **In Memory DB** | Standalone TCP service (`cmd/in-memory-db`) |
 | **Custom Logger** | Shared logging package (`internal/logger`) used by Backend API and In Memory DB |
 
-**Driver web application:** Frontend and Backend API are one integrated app in this repository.
+**Driver web application:** Frontend and Backend API are one integrated app in this repository. Postgres is the source of truth; the In Memory DB is a cache in front of it when caching is enabled.
 
 ### External interfaces
 
@@ -90,25 +94,65 @@ Server defaults (configurable):
 
 ---
 
+## Driver web application
+
+Manual test bed. HTML forms for CRUD on a single Postgres-backed entity (e.g. rows with id, key, value). Each user action is one HTTP request; the API executes the operation and returns an HTMX partial with the result and updated metrics. No automated benchmark runner in the UI.
+
+### KV toggle
+
+| Mode | Behavior |
+|------|----------|
+| **PG only** (`with_kv=false`) | All CRUD goes directly to Postgres |
+| **With KV** (`with_kv=true`) | Cache-aside: reads try KV first; writes go to Postgres and update or invalidate KV |
+
+Toggle is a UI control (e.g. checkbox) passed on each request — session cookie or form field is fine. Same handlers in both modes; branch on the flag.
+
+**Cache-aside per operation (with KV enabled):**
+
+| Operation | Path |
+|-----------|------|
+| Create | INSERT Postgres → SET KV |
+| Read | GET KV → on miss, SELECT Postgres → SET KV |
+| Update | UPDATE Postgres → SET KV (or DELETE KV to invalidate) |
+| Delete | DELETE Postgres → DELETE KV |
+
+KV keys map to a stable string derived from the entity (e.g. row id). The KV protocol has no key enumeration; the UI does not browse the KV store — it only drives CRUD on the Postgres entity.
+
+### Metrics
+
+Displayed in the UI after every operation. Tracked in memory in the API process (no Postgres table for metrics).
+
+| Metric | Description |
+|--------|-------------|
+| Last op latency | Wall-clock ms for the most recent request |
+| Op type | create / read / update / delete |
+| Cache hit/miss | On read, when KV is enabled |
+| Running totals | Op count and average latency (optionally per op type) |
+| Recent log | Last N operations (time, op, latency, hit/miss, mode) |
+
+---
+
 ## Backend API
 
 Entry point: `cmd/api`.
 
 | Package | Role |
 |---------|------|
-| `internal/api/server` | HTTP routes; render templates |
-| `internal/api/db` | Postgres access |
+| `internal/api/server` | HTTP routes; render templates; metrics state |
+| `internal/api/db` | Postgres access; CRUD on the application entity |
 | `internal/api/kvclient` | TCP client to In Memory DB |
 
 Serves HTML templates and static assets (Pico.css). HTMX drives dynamic fragments without a separate frontend build.
 
-Postgres holds application data the UI needs to persist. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
+Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
 
 ---
 
 ## Local runtime
 
-1. `docker compose up` — Postgres  
+Docker Compose runs **Postgres only** — a local instance isolated from any Postgres on the host (map to a non-default host port, e.g. `5433`). The API and In Memory DB run as local Go processes.
+
+1. `docker compose up` — Postgres (container only)  
 2. `go run ./cmd/in-memory-db` — In Memory DB  
 3. `go run ./cmd/api` — Driver web app  
 
