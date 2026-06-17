@@ -138,13 +138,35 @@ Entry point: `cmd/api`.
 
 | Package | Role |
 |---------|------|
+| `internal/db` | Shared Postgres connection; `.env` loading |
 | `internal/api/server` | HTTP routes; render templates; metrics state |
-| `internal/api/db` | Postgres access; CRUD on the application entity |
+| `internal/api/db` | CRUD queries on `items` (later) |
 | `internal/api/kvclient` | TCP client to In Memory DB |
 
 Serves HTML templates and static assets (Pico.css). HTMX drives dynamic fragments without a separate frontend build.
 
 Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
+
+---
+
+## Postgres schema
+
+Single application table: `items`. Migrations live in `migrations/`; apply with `go run ./cmd/migrate`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `bigserial` PK | Internal; KV cache key = `item:{id}` |
+| `key` | `varchar(255)` | User-facing alphanumeric serial |
+| `value` | `text` | Payload |
+| `created_at` | `timestamptz` | Set on insert |
+| `updated_at` | `timestamptz` | Set on update |
+| `deleted_at` | `timestamptz` | Soft delete; `NULL` = live row |
+
+Partial unique index on `key` where `deleted_at IS NULL` — live keys are unique; keys may be reused after soft delete.
+
+**Lookups:** by `id`, by `key`, or by `id` + `key` together. All reads filter `deleted_at IS NULL`.
+
+**Seed:** `go run ./cmd/seed` inserts rows (default 500; override with `SEED_COUNT` or `-count`). Skips if enough live rows already exist.
 
 ---
 
@@ -154,7 +176,9 @@ Docker Compose runs **Postgres only** — a local instance isolated from any Pos
 
 1. `cp .env.example .env` — local config (`.env` is gitignored)  
 2. `docker compose up -d` — Postgres (container only)  
-3. `go run ./cmd/in-memory-db` — In Memory DB  
-4. `go run ./cmd/api` — Driver web app  
+3. `go run ./cmd/migrate` — apply SQL migrations  
+4. `go run ./cmd/seed` — optional seed data  
+5. `go run ./cmd/in-memory-db` — In Memory DB  
+6. `go run ./cmd/api` — Driver web app  
 
 Module: `github.com/inv-hemanthb/in-memory-db` (Go 1.23).
