@@ -150,10 +150,11 @@ Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; t
 
 ## Local runtime
 
-Docker Compose runs **Postgres only** — a local instance isolated from any Postgres on the host (map to a non-default host port, e.g. `5433`). The API and In Memory DB run as local Go processes.
+Docker Compose runs **Postgres only** — a local instance isolated from any Postgres on the host. Copy `.env.example` to `.env` and set `POSTGRES_HOST_PORT` (default `5434`) so it does not clash with other Postgres instances. The API and In Memory DB run as local Go processes.
 
-1. `docker compose up` — Postgres (container only)  
-2. `go run ./cmd/in-memory-db` — In Memory DB  
-3. `go run ./cmd/api` — Driver web app  
+1. `cp .env.example .env` — local config (`.env` is gitignored)  
+2. `docker compose up -d` — Postgres (container only)  
+3. `go run ./cmd/in-memory-db` — In Memory DB  
+4. `go run ./cmd/api` — Driver web app  
 
 Module: `github.com/inv-hemanthb/in-memory-db` (Go 1.23).
