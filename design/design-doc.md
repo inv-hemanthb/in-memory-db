@@ -6,7 +6,7 @@ Go learning project: custom in-memory key-value database and a driver web applic
 
 **In Memory DB is complete and immutable** — protocol, engine, and TCP service are not changing. All new work is the driver web application and its integration with Postgres and the KV service.
 
-**Purpose of the web application:** a manual CRUD test bed (not a product demo, not automated load simulation). The user performs create/read/update/delete operations by hand in the UI and compares latency with KV caching enabled vs Postgres alone. Repeated manual reads naturally show cold-cache (miss → PG) vs warm-cache (hit → KV) behavior. No authentication.
+**Purpose of the web application:** a manual CRUD test bed (not a product demo, not a background auto load generator). The user triggers each run and sets **count** (how many iterations). **Read** supports batch: one Run executes `count` read iterations server-side (default 1, max 10000). Create, Update, Delete, and Clear cache are single operations per run. Compare latency with KV caching enabled vs Postgres alone; repeated reads show cold-cache (miss → PG) vs warm-cache (hit → KV) behavior. No authentication.
 
 ---
 
@@ -96,7 +96,7 @@ Server defaults (configurable):
 
 ## Driver web application
 
-Manual test bed. HTML forms for CRUD on a single Postgres-backed entity (e.g. rows with id, key, value). Each user action is one HTTP request; the API executes the operation and returns an HTMX partial with the result and updated metrics. No automated benchmark runner in the UI.
+Manual test bed. Desktop **operations table** UI: one row per operation (Create, Read, Update, Delete, Clear cache) with inputs in table cells. The user triggers each run from the table; **Read** has a **count** field (default 1). One HTTP request per Run; the API loops reads server-side when `count` > 1 and returns an HTMX partial with the result and updated metrics. No automated benchmark runner in the UI.
 
 ### KV toggle
 
@@ -124,11 +124,31 @@ Displayed in the UI after every operation. Tracked in memory in the API process 
 
 | Metric | Description |
 |--------|-------------|
-| Last op latency | Wall-clock ms for the most recent request |
-| Op type | create / read / update / delete |
-| Cache hit/miss | On read, when KV is enabled |
-| Running totals | Op count and average latency (optionally per op type) |
-| Recent log | Last N operations (time, op, latency, hit/miss, mode) |
+| Last op latency | Wall-clock ms for the most recent run (total ms for read batches) |
+| Op type | create / read / update / delete / clear_cache |
+| Status | ok / fail per run |
+| Batch count | Read iterations in the run (`BatchCount`; 1 for single-op runs) |
+| Cache hit/miss | On single read with KV, or aggregate hits/misses for read batches |
+| Running totals | Run count and average latency per run |
+| Recent log | Last N runs (time, op, status, count, latency, kv, cache, hits, misses) |
+
+### UI (`web/`)
+
+| Path | Role |
+|------|------|
+| `web/static/pico.min.css` | Pico.css (vendored) |
+| `web/static/app.css` | Desktop table layout overrides |
+| `web/static/htmx.min.js` | HTMX 2.0.4 (vendored) |
+| `web/templates/index.html` | Full test bed page (operations table) |
+| `web/templates/partials/` | HTMX partials (result, metrics, response) |
+
+Served at `GET /static/` and rendered via `html/template` from [`internal/api/templates.go`](internal/api/templates.go).
+
+- **Global KV toggle** — `#kv-toggle` checkbox; all forms use `hx-include="#kv-toggle"`
+- **Layout** — result panel at top, operations table in the middle, metrics panel at the bottom
+- **Operations table** — columns: Op, Count (Read only), ID, Key, Value, Hard, Action
+- **HTMX** — forms target `#result` (`outerHTML` swap); metrics updated via `hx-swap-oob` on `#metrics`; 4xx/5xx responses swap so errors (e.g. duplicate key) appear in the UI
+- **Page** — Create, Read (id/key/both, batch count), Update, Delete (soft/hard), Clear cache
 
 ---
 
@@ -143,7 +163,7 @@ Entry point: `cmd/api`.
 | `internal/api/db` | CRUD queries on `items` |
 | `internal/api/kvclient` | TCP client to In Memory DB |
 
-Serves HTML (minimal snippets until templates). HTMX UI planned for a later step.
+Serves HTML via Go templates and static assets (Pico.css, HTMX). Templates live in `web/templates/`; static files in `web/static/`.
 
 Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
 
@@ -153,7 +173,7 @@ Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; t
 |--------|------|---------|
 | `GET` | `/` | Health placeholder |
 | `POST` | `/items` | Create (`key`, `value`, `with_kv`) |
-| `GET` | `/items/read` | Read by `id`, `key`, or both (`with_kv` query) |
+| `GET` | `/items/read` | Read by `id`, `key`, or both; `count` (default 1, max 10000) for batch; `with_kv` query |
 | `POST` | `/items/update` | Update (`id`, `value`, `with_kv`) |
 | `POST` | `/items/delete` | Soft/hard delete (`id`, `hard`, `with_kv`) |
 | `POST` | `/cache/clear` | Clear KV store |
@@ -174,7 +194,7 @@ Cache-aside orchestration over `Store` + `kvclient`. Cache key: `item:{id}`. Cac
 
 ### Metrics (`internal/api`)
 
-In-memory per process: last op latency, op type, cache hit/miss, running count/average, recent 20 entries. Recorded by handlers after each request.
+In-memory per process: last run latency, op type, status (ok/fail), batch count, cache hit/miss (or batch hits/misses on read), running count/average, recent 20 entries. Recorded by handlers after each run.
 
 ### KV Client API (`internal/api/kvclient`)
 

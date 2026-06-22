@@ -1,0 +1,75 @@
+main.container {
+  max-width: 1200px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.result-panel {
+  margin-bottom: 1.5rem;
+}
+
+.metrics-panel {
+  margin-top: 1.5rem;
+}
+
+.ops-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.ops-table th,
+.ops-table td {
+  border: 1px solid var(--pico-muted-border-color);
+  padding: 0.5rem 0.75rem;
+  vertical-align: middle;
+}
+
+.ops-table th {
+  background: var(--pico-card-background-color);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ops-table input[type="text"],
+.ops-table input[type="number"] {
+  margin-bottom: 0;
+  width: 100%;
+  min-width: 5rem;
+}
+
+.ops-table input.count-input {
+  max-width: 6rem;
+}
+
+.ops-table .muted {
+  color: var(--pico-muted-color);
+  text-align: center;
+}
+
+.ops-table button {
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.ops-table form {
+  display: contents;
+}
+
+.data-table {
+  width: 100%;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.35rem 0.75rem;
+}
+
+.status-fail {
+  color: var(--pico-del-color);
+}

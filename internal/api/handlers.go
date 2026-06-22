@@ -3,7 +3,6 @@ package api
 import (
 	"errors"
 	"fmt"
-	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +11,8 @@ import (
 	apidb "github.com/inv-hemanthb/in-memory-db/internal/api/db"
 	"github.com/inv-hemanthb/in-memory-db/internal/api/kvclient"
 )
+
+const maxReadCount = 10000
 
 func parseWithKV(r *http.Request) bool {
 	v := strings.TrimSpace(r.FormValue("with_kv"))
@@ -33,6 +34,22 @@ func parseHardDelete(r *http.Request) bool {
 	}
 }
 
+func parseCount(r *http.Request) (int, error) {
+	v := strings.TrimSpace(r.FormValue("count"))
+	if v == "" {
+		return 1, nil
+	}
+
+	count, err := strconv.Atoi(v)
+	if err != nil || count < 1 {
+		return 0, fmt.Errorf("invalid count")
+	}
+	if count > maxReadCount {
+		return 0, fmt.Errorf("count exceeds %d", maxReadCount)
+	}
+	return count, nil
+}
+
 func mapError(err error) (int, string) {
 	switch {
 	case errors.Is(err, apidb.ErrNotFound):
@@ -46,233 +63,302 @@ func mapError(err error) (int, string) {
 	}
 }
 
-func writeHTML(w http.ResponseWriter, status int, body string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = w.Write([]byte(body))
-}
-
-func (s *Server) recordMetrics(op string, withKV bool, cacheHit *bool, start time.Time) {
-	s.metrics.Record(Entry{
-		At:        time.Now(),
-		Op:        op,
-		LatencyMs: time.Since(start).Milliseconds(),
-		WithKV:    withKV,
-		CacheHit:  cacheHit,
+func (s *Server) recordMetrics(op string, withKV bool, cacheHit *bool, start time.Time, success bool) {
+	s.recordMetricsEntry(Entry{
+		At:         time.Now(),
+		Op:         op,
+		LatencyMs:  time.Since(start).Milliseconds(),
+		WithKV:     withKV,
+		CacheHit:   cacheHit,
+		BatchCount: 1,
+		Success:    success,
 	})
 }
 
-func (s *Server) renderResponse(w http.ResponseWriter, status int, resultHTML string) {
-	snap := s.metrics.Snapshot()
-	writeHTML(w, status, resultHTML+renderMetricsHTML(snap))
-}
-
-func renderMetricsHTML(snap MetricsView) string {
-	var b strings.Builder
-	b.WriteString("<section><h2>Metrics</h2>")
-	b.WriteString(fmt.Sprintf("<p>Last: %s | %dms | with_kv=%t",
-		html.EscapeString(snap.Last.Op),
-		snap.Last.LatencyMs,
-		snap.Last.WithKV,
-	))
-	if snap.Last.CacheHit != nil {
-		b.WriteString(fmt.Sprintf(" | cache_hit=%t", *snap.Last.CacheHit))
-	}
-	b.WriteString("</p>")
-	b.WriteString(fmt.Sprintf("<p>Total ops: %d | Avg latency: %dms</p>", snap.TotalCount, snap.AvgLatencyMs))
-	if len(snap.Recent) > 0 {
-		b.WriteString("<ul>")
-		for i := len(snap.Recent) - 1; i >= 0; i-- {
-			e := snap.Recent[i]
-			line := fmt.Sprintf("%s %s %dms kv=%t", e.At.Format("15:04:05"), e.Op, e.LatencyMs, e.WithKV)
-			if e.CacheHit != nil {
-				line += fmt.Sprintf(" hit=%t", *e.CacheHit)
-			}
-			b.WriteString("<li>" + html.EscapeString(line) + "</li>")
-		}
-		b.WriteString("</ul>")
-	}
-	b.WriteString("</section>")
-	return b.String()
-}
-
-func renderItemHTML(item apidb.Item) string {
-	return fmt.Sprintf(
-		"<p>id=%d key=%s value=%s</p>",
-		item.ID,
-		html.EscapeString(item.Key),
-		html.EscapeString(item.Value),
-	)
+func (s *Server) recordMetricsEntry(entry Entry) {
+	s.metrics.Record(entry)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeHTML(w, http.StatusMethodNotAllowed, "<p>method not allowed</p>")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeHTML(w, http.StatusOK, "<p>API running</p>")
+	s.render(w, http.StatusOK, "index.html", s.metrics.Snapshot())
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeHTML(w, http.StatusMethodNotAllowed, "<p>method not allowed</p>")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		writeHTML(w, http.StatusBadRequest, "<p>invalid form</p>")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	start := time.Now()
+	if err := r.ParseForm(); err != nil {
+		s.recordMetrics("create", false, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
+		return
+	}
+
 	withKV := parseWithKV(r)
 	key := strings.TrimSpace(r.FormValue("key"))
 	value := r.FormValue("value")
 	if key == "" {
-		writeHTML(w, http.StatusBadRequest, "<p>key is required</p>")
+		s.recordMetrics("create", withKV, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "key is required"})
 		return
 	}
 
 	result, err := s.service.Create(r.Context(), withKV, key, value)
-	s.recordMetrics("create", withKV, result.CacheHit, start)
 	if err != nil {
+		s.recordMetrics("create", withKV, nil, start, false)
 		status, msg := mapError(err)
-		s.renderResponse(w, status, "<p>"+html.EscapeString(msg)+"</p>")
+		s.renderHTMXResponse(w, status, ResultData{Error: msg})
 		return
 	}
 
-	s.renderResponse(w, http.StatusOK, "<section><h2>Created</h2>"+renderItemHTML(result.Item)+"</section>")
+	s.recordMetrics("create", withKV, result.CacheHit, start, true)
+	item := result.Item
+	s.renderHTMXResponse(w, http.StatusOK, ResultData{
+		Title: "Created",
+		Item:  &item,
+	})
 }
 
 func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeHTML(w, http.StatusMethodNotAllowed, "<p>method not allowed</p>")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	start := time.Now()
 	withKV := parseWithKV(r)
+
+	count, err := parseCount(r)
+	if err != nil {
+		s.recordMetrics("read", withKV, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: err.Error()})
+		return
+	}
+
 	idStr := strings.TrimSpace(r.URL.Query().Get("id"))
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 
-	var result OpResult
-	var err error
+	var lastResult OpResult
+	var hits, misses int
 
-	switch {
-	case idStr != "" && key != "":
-		id, parseErr := strconv.ParseInt(idStr, 10, 64)
-		if parseErr != nil {
-			writeHTML(w, http.StatusBadRequest, "<p>invalid id</p>")
+	for i := 0; i < count; i++ {
+		var result OpResult
+		var readErr error
+
+		switch {
+		case idStr != "" && key != "":
+			id, parseErr := strconv.ParseInt(idStr, 10, 64)
+			if parseErr != nil {
+				s.recordMetricsEntry(Entry{
+					At:         time.Now(),
+					Op:         "read",
+					LatencyMs:  time.Since(start).Milliseconds(),
+					WithKV:     withKV,
+					BatchCount: count,
+					Success:    false,
+				})
+				s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
+				return
+			}
+			result, readErr = s.service.ReadByIDAndKey(r.Context(), withKV, id, key)
+		case idStr != "":
+			id, parseErr := strconv.ParseInt(idStr, 10, 64)
+			if parseErr != nil {
+				s.recordMetricsEntry(Entry{
+					At:         time.Now(),
+					Op:         "read",
+					LatencyMs:  time.Since(start).Milliseconds(),
+					WithKV:     withKV,
+					BatchCount: count,
+					Success:    false,
+				})
+				s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
+				return
+			}
+			result, readErr = s.service.ReadByID(r.Context(), withKV, id)
+		case key != "":
+			result, readErr = s.service.ReadByKey(r.Context(), withKV, key)
+		default:
+			s.recordMetricsEntry(Entry{
+				At:         time.Now(),
+				Op:         "read",
+				LatencyMs:  time.Since(start).Milliseconds(),
+				WithKV:     withKV,
+				BatchCount: count,
+				Success:    false,
+			})
+			s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "id or key is required"})
 			return
 		}
-		result, err = s.service.ReadByIDAndKey(r.Context(), withKV, id, key)
-	case idStr != "":
-		id, parseErr := strconv.ParseInt(idStr, 10, 64)
-		if parseErr != nil {
-			writeHTML(w, http.StatusBadRequest, "<p>invalid id</p>")
+
+		if readErr != nil {
+			totalMs := time.Since(start).Milliseconds()
+			s.recordMetricsEntry(Entry{
+				At:          time.Now(),
+				Op:          "read",
+				LatencyMs:   totalMs,
+				WithKV:      withKV,
+				BatchCount:  count,
+				CacheHits:   hits,
+				CacheMisses: misses,
+				Success:     false,
+			})
+			status, msg := mapError(readErr)
+			s.renderHTMXResponse(w, status, ResultData{Error: msg})
 			return
 		}
-		result, err = s.service.ReadByID(r.Context(), withKV, id)
-	case key != "":
-		result, err = s.service.ReadByKey(r.Context(), withKV, key)
-	default:
-		writeHTML(w, http.StatusBadRequest, "<p>id or key is required</p>")
-		return
+
+		if withKV && result.CacheHit != nil {
+			if *result.CacheHit {
+				hits++
+			} else {
+				misses++
+			}
+		}
+		lastResult = result
 	}
 
-	s.recordMetrics("read", withKV, result.CacheHit, start)
-	if err != nil {
-		status, msg := mapError(err)
-		s.renderResponse(w, status, "<p>"+html.EscapeString(msg)+"</p>")
-		return
+	totalMs := time.Since(start).Milliseconds()
+	entry := Entry{
+		At:         time.Now(),
+		Op:         "read",
+		LatencyMs:  totalMs,
+		WithKV:     withKV,
+		BatchCount: count,
+		Success:    true,
 	}
+	if count == 1 && withKV {
+		entry.CacheHit = lastResult.CacheHit
+	}
+	if withKV && count > 1 {
+		entry.CacheHits = hits
+		entry.CacheMisses = misses
+	}
+	s.recordMetricsEntry(entry)
 
-	s.renderResponse(w, http.StatusOK, "<section><h2>Read</h2>"+renderItemHTML(result.Item)+"</section>")
+	item := lastResult.Item
+	resultData := ResultData{
+		Title: "Read",
+		Item:  &item,
+	}
+	if count > 1 {
+		resultData.BatchCount = count
+		resultData.TotalMs = totalMs
+		resultData.AvgMs = float64(totalMs) / float64(count)
+		resultData.CacheHits = hits
+		resultData.CacheMisses = misses
+	}
+	s.renderHTMXResponse(w, http.StatusOK, resultData)
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeHTML(w, http.StatusMethodNotAllowed, "<p>method not allowed</p>")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		writeHTML(w, http.StatusBadRequest, "<p>invalid form</p>")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	start := time.Now()
+	if err := r.ParseForm(); err != nil {
+		s.recordMetrics("update", false, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
+		return
+	}
+
 	withKV := parseWithKV(r)
 	idStr := strings.TrimSpace(r.FormValue("id"))
 	value := r.FormValue("value")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeHTML(w, http.StatusBadRequest, "<p>invalid id</p>")
+		s.recordMetrics("update", withKV, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
 		return
 	}
 
 	result, err := s.service.Update(r.Context(), withKV, id, value)
-	s.recordMetrics("update", withKV, result.CacheHit, start)
 	if err != nil {
+		s.recordMetrics("update", withKV, nil, start, false)
 		status, msg := mapError(err)
-		s.renderResponse(w, status, "<p>"+html.EscapeString(msg)+"</p>")
+		s.renderHTMXResponse(w, status, ResultData{Error: msg})
 		return
 	}
 
-	s.renderResponse(w, http.StatusOK, "<section><h2>Updated</h2>"+renderItemHTML(result.Item)+"</section>")
+	s.recordMetrics("update", withKV, result.CacheHit, start, true)
+	item := result.Item
+	s.renderHTMXResponse(w, http.StatusOK, ResultData{
+		Title: "Updated",
+		Item:  &item,
+	})
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeHTML(w, http.StatusMethodNotAllowed, "<p>method not allowed</p>")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		writeHTML(w, http.StatusBadRequest, "<p>invalid form</p>")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	start := time.Now()
+	if err := r.ParseForm(); err != nil {
+		s.recordMetrics("delete", false, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
+		return
+	}
+
 	withKV := parseWithKV(r)
 	hard := parseHardDelete(r)
 	idStr := strings.TrimSpace(r.FormValue("id"))
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeHTML(w, http.StatusBadRequest, "<p>invalid id</p>")
+		s.recordMetrics("delete", withKV, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
 		return
 	}
 
 	err = s.service.Delete(r.Context(), withKV, id, hard)
-	s.recordMetrics("delete", withKV, nil, start)
 	if err != nil {
+		s.recordMetrics("delete", withKV, nil, start, false)
 		status, msg := mapError(err)
-		s.renderResponse(w, status, "<p>"+html.EscapeString(msg)+"</p>")
+		s.renderHTMXResponse(w, status, ResultData{Error: msg})
 		return
 	}
 
-	kind := "soft deleted"
+	s.recordMetrics("delete", withKV, nil, start, true)
+	kind := fmt.Sprintf("id=%d soft deleted", id)
 	if hard {
-		kind = "hard deleted"
+		kind = fmt.Sprintf("id=%d hard deleted", id)
 	}
-	s.renderResponse(w, http.StatusOK, fmt.Sprintf("<section><h2>Deleted</h2><p>id=%d %s</p></section>", id, kind))
+	s.renderHTMXResponse(w, http.StatusOK, ResultData{
+		Title: "Deleted",
+		Extra: kind,
+	})
 }
 
 func (s *Server) handleClearCache(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeHTML(w, http.StatusMethodNotAllowed, "<p>method not allowed</p>")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		writeHTML(w, http.StatusBadRequest, "<p>invalid form</p>")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	start := time.Now()
-	err := s.service.ClearCache(r.Context())
-	s.recordMetrics("clear_cache", false, nil, start)
-	if err != nil {
-		status, msg := mapError(err)
-		s.renderResponse(w, status, "<p>"+html.EscapeString(msg)+"</p>")
+	if err := r.ParseForm(); err != nil {
+		s.recordMetrics("clear_cache", false, nil, start, false)
+		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
 		return
 	}
 
-	s.renderResponse(w, http.StatusOK, "<section><h2>Cache cleared</h2></section>")
+	err := s.service.ClearCache(r.Context())
+	if err != nil {
+		s.recordMetrics("clear_cache", false, nil, start, false)
+		status, msg := mapError(err)
+		s.renderHTMXResponse(w, status, ResultData{Error: msg})
+		return
+	}
+
+	s.recordMetrics("clear_cache", false, nil, start, true)
+	s.renderHTMXResponse(w, http.StatusOK, ResultData{Title: "Cache cleared"})
 }

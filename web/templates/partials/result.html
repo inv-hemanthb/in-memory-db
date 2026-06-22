@@ -1,0 +1,31 @@
+{{define "partials/result-inner"}}
+<article>
+  {{if .Error}}
+  <p><mark>{{.Error}}</mark></p>
+  {{else}}
+  <header><strong>{{.Title}}</strong></header>
+  {{if gt .BatchCount 1}}
+  <p>
+    x{{.BatchCount}} — {{.TotalMs}}ms total, {{printf "%.3f" .AvgMs}}ms avg
+    {{if or (gt .CacheHits 0) (gt .CacheMisses 0)}}— hits {{.CacheHits}}, misses {{.CacheMisses}}{{end}}
+  </p>
+  {{end}}
+  {{if .Item}}
+  <table class="data-table">
+    <thead>
+      <tr><th>id</th><th>key</th><th>value</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{.Item.ID}}</td>
+        <td>{{.Item.Key}}</td>
+        <td>{{.Item.Value}}</td>
+      </tr>
+    </tbody>
+  </table>
+  {{else if .Extra}}
+  <p>{{.Extra}}</p>
+  {{end}}
+  {{end}}
+</article>
+{{end}}

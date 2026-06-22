@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>In-Memory DB Test Bed</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"[45]..","swap":true},{"code":"...","swap":false}]}'>
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+<main class="container">
+  <h1>In-Memory DB Test Bed</h1>
+
+  <div class="toolbar">
+    <div id="kv-toggle">
+      <label>
+        <input type="checkbox" name="with_kv" value="on">
+        Use KV cache
+      </label>
+    </div>
+  </div>
+
+  <section id="result" class="result-panel">
+    <article>
+      <p>Run an operation to see results here.</p>
+    </article>
+  </section>
+
+  <table class="ops-table">
+    <thead>
+      <tr>
+        <th>Op</th>
+        <th>Count</th>
+        <th>ID</th>
+        <th>Key</th>
+        <th>Value</th>
+        <th>Hard</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <form hx-post="/items" hx-target="#result" hx-swap="outerHTML" hx-include="#kv-toggle">
+          <td>Create</td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+          <td><input type="text" name="key" required></td>
+          <td><input type="text" name="value" required></td>
+          <td class="muted">—</td>
+          <td><button type="submit">Run</button></td>
+        </form>
+      </tr>
+      <tr>
+        <form hx-get="/items/read" hx-target="#result" hx-swap="outerHTML" hx-include="#kv-toggle">
+          <td>Read</td>
+          <td><input class="count-input" type="number" name="count" value="1" min="1" max="10000" required></td>
+          <td><input type="number" name="id" min="1"></td>
+          <td><input type="text" name="key"></td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+          <td><button type="submit">Run</button></td>
+        </form>
+      </tr>
+      <tr>
+        <form hx-post="/items/update" hx-target="#result" hx-swap="outerHTML" hx-include="#kv-toggle">
+          <td>Update</td>
+          <td class="muted">—</td>
+          <td><input type="number" name="id" min="1" required></td>
+          <td class="muted">—</td>
+          <td><input type="text" name="value" required></td>
+          <td class="muted">—</td>
+          <td><button type="submit">Run</button></td>
+        </form>
+      </tr>
+      <tr>
+        <form hx-post="/items/delete" hx-target="#result" hx-swap="outerHTML" hx-include="#kv-toggle">
+          <td>Delete</td>
+          <td class="muted">—</td>
+          <td><input type="number" name="id" min="1" required></td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+          <td><label><input type="checkbox" name="hard" value="on"> hard</label></td>
+          <td><button type="submit">Run</button></td>
+        </form>
+      </tr>
+      <tr>
+        <form hx-post="/cache/clear" hx-target="#result" hx-swap="outerHTML" hx-include="#kv-toggle">
+          <td>Clear cache</td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+          <td class="muted">—</td>
+          <td><button type="submit">Run</button></td>
+        </form>
+      </tr>
+    </tbody>
+  </table>
+
+  <section id="metrics" class="metrics-panel">
+    {{template "partials/metrics-inner" .}}
+  </section>
+</main>
+</body>
+</html>

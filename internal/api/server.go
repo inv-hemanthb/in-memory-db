@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"html/template"
 	"net"
 	"net/http"
 	"time"
@@ -13,20 +14,35 @@ import (
 )
 
 type Server struct {
-	service *ItemService
-	metrics *Metrics
-	log     *logger.Logger
-	mux     *http.ServeMux
+	service   *ItemService
+	metrics   *Metrics
+	log       *logger.Logger
+	mux       *http.ServeMux
+	templates *template.Template
 }
 
 func NewServer(store *apidb.Store, kv *kvclient.Client, log *logger.Logger) *Server {
-	s := &Server{
-		service: NewItemService(store, kv),
-		metrics: NewMetrics(),
-		log:     log,
-		mux:     http.NewServeMux(),
+	templates, err := loadTemplates()
+	if err != nil {
+		log.Error("load templates: %v", err)
+		panic(err)
 	}
 
+	s := &Server{
+		service:   NewItemService(store, kv),
+		metrics:   NewMetrics(),
+		log:       log,
+		mux:       http.NewServeMux(),
+		templates: templates,
+	}
+
+	staticPath, err := staticDir()
+	if err != nil {
+		log.Error("static dir: %v", err)
+		panic(err)
+	}
+
+	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticPath))))
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("POST /items", s.handleCreate)
 	s.mux.HandleFunc("GET /items/read", s.handleRead)
