@@ -96,6 +96,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	if err := r.ParseForm(); err != nil {
 		s.recordMetrics("create", false, nil, start, false)
+		s.log.Info("create fail err=invalid form %dms", time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
 		return
 	}
@@ -105,6 +106,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	value := r.FormValue("value")
 	if key == "" {
 		s.recordMetrics("create", withKV, nil, start, false)
+		s.log.Info("create with_kv=%v fail err=key is required %dms", withKV, time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "key is required"})
 		return
 	}
@@ -113,12 +115,14 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.recordMetrics("create", withKV, nil, start, false)
 		status, msg := mapError(err)
+		s.log.Info("create key=%s with_kv=%v fail err=%s %dms", key, withKV, msg, time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, status, ResultData{Error: msg})
 		return
 	}
 
 	s.recordMetrics("create", withKV, result.CacheHit, start, true)
 	item := result.Item
+	s.log.Info("create key=%s with_kv=%v ok id=%d %dms", key, withKV, item.ID, time.Since(start).Milliseconds())
 	s.renderHTMXResponse(w, http.StatusOK, ResultData{
 		Title: "Created",
 		Item:  &item,
@@ -137,6 +141,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 	count, err := parseCount(r)
 	if err != nil {
 		s.recordMetrics("read", withKV, nil, start, false)
+		s.log.Info("read with_kv=%v fail err=%s %dms", withKV, err.Error(), time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: err.Error()})
 		return
 	}
@@ -163,6 +168,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 					BatchCount: count,
 					Success:    false,
 				})
+				s.log.Info("read count=%d with_kv=%v fail err=invalid id %dms", count, withKV, time.Since(start).Milliseconds())
 				s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
 				return
 			}
@@ -178,6 +184,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 					BatchCount: count,
 					Success:    false,
 				})
+				s.log.Info("read count=%d with_kv=%v fail err=invalid id %dms", count, withKV, time.Since(start).Milliseconds())
 				s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
 				return
 			}
@@ -193,6 +200,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 				BatchCount: count,
 				Success:    false,
 			})
+			s.log.Info("read count=%d with_kv=%v fail err=id or key is required %dms", count, withKV, time.Since(start).Milliseconds())
 			s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "id or key is required"})
 			return
 		}
@@ -210,6 +218,11 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 				Success:     false,
 			})
 			status, msg := mapError(readErr)
+			if withKV && count > 1 {
+				s.log.Info("read id=%s key=%s count=%d with_kv=%v fail err=%s hits=%d misses=%d %dms", idStr, key, count, withKV, msg, hits, misses, totalMs)
+			} else {
+				s.log.Info("read id=%s key=%s count=%d with_kv=%v fail err=%s %dms", idStr, key, count, withKV, msg, totalMs)
+			}
 			s.renderHTMXResponse(w, status, ResultData{Error: msg})
 			return
 		}
@@ -254,6 +267,11 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		resultData.CacheHits = hits
 		resultData.CacheMisses = misses
 	}
+	if withKV && count > 1 {
+		s.log.Info("read id=%s key=%s count=%d with_kv=%v ok hits=%d misses=%d %dms", idStr, key, count, withKV, hits, misses, totalMs)
+	} else {
+		s.log.Info("read id=%s key=%s count=%d with_kv=%v ok %dms", idStr, key, count, withKV, totalMs)
+	}
 	s.renderHTMXResponse(w, http.StatusOK, resultData)
 }
 
@@ -266,6 +284,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	if err := r.ParseForm(); err != nil {
 		s.recordMetrics("update", false, nil, start, false)
+		s.log.Info("update fail err=invalid form %dms", time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
 		return
 	}
@@ -276,6 +295,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		s.recordMetrics("update", withKV, nil, start, false)
+		s.log.Info("update with_kv=%v fail err=invalid id %dms", withKV, time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
 		return
 	}
@@ -284,12 +304,14 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.recordMetrics("update", withKV, nil, start, false)
 		status, msg := mapError(err)
+		s.log.Info("update id=%d with_kv=%v fail err=%s %dms", id, withKV, msg, time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, status, ResultData{Error: msg})
 		return
 	}
 
 	s.recordMetrics("update", withKV, result.CacheHit, start, true)
 	item := result.Item
+	s.log.Info("update id=%d with_kv=%v ok %dms", id, withKV, time.Since(start).Milliseconds())
 	s.renderHTMXResponse(w, http.StatusOK, ResultData{
 		Title: "Updated",
 		Item:  &item,
@@ -305,6 +327,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	if err := r.ParseForm(); err != nil {
 		s.recordMetrics("delete", false, nil, start, false)
+		s.log.Info("delete fail err=invalid form %dms", time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
 		return
 	}
@@ -315,6 +338,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		s.recordMetrics("delete", withKV, nil, start, false)
+		s.log.Info("delete with_kv=%v fail err=invalid id %dms", withKV, time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid id"})
 		return
 	}
@@ -323,6 +347,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.recordMetrics("delete", withKV, nil, start, false)
 		status, msg := mapError(err)
+		s.log.Info("delete id=%d hard=%v with_kv=%v fail err=%s %dms", id, hard, withKV, msg, time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, status, ResultData{Error: msg})
 		return
 	}
@@ -332,6 +357,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if hard {
 		kind = fmt.Sprintf("id=%d hard deleted", id)
 	}
+	s.log.Info("delete id=%d hard=%v with_kv=%v ok %dms", id, hard, withKV, time.Since(start).Milliseconds())
 	s.renderHTMXResponse(w, http.StatusOK, ResultData{
 		Title: "Deleted",
 		Extra: kind,
@@ -347,6 +373,7 @@ func (s *Server) handleClearCache(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	if err := r.ParseForm(); err != nil {
 		s.recordMetrics("clear_cache", false, nil, start, false)
+		s.log.Info("clear_cache fail err=invalid form %dms", time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, http.StatusBadRequest, ResultData{Error: "invalid form"})
 		return
 	}
@@ -355,10 +382,12 @@ func (s *Server) handleClearCache(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.recordMetrics("clear_cache", false, nil, start, false)
 		status, msg := mapError(err)
+		s.log.Info("clear_cache fail err=%s %dms", msg, time.Since(start).Milliseconds())
 		s.renderHTMXResponse(w, status, ResultData{Error: msg})
 		return
 	}
 
 	s.recordMetrics("clear_cache", false, nil, start, true)
+	s.log.Info("clear_cache ok %dms", time.Since(start).Milliseconds())
 	s.renderHTMXResponse(w, http.StatusOK, ResultData{Title: "Cache cleared"})
 }

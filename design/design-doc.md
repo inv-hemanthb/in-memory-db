@@ -102,19 +102,19 @@ Manual test bed. Desktop **operations table** UI: one row per operation (Create,
 
 | Mode | Behavior |
 |------|----------|
-| **PG only** (`with_kv=false`) | All CRUD goes directly to Postgres |
-| **With KV** (`with_kv=true`) | Cache-aside: reads try KV first; writes go to Postgres and update or invalidate KV |
+| **PG only** (`with_kv=false`) | Reads go directly to Postgres; writes go to Postgres and **invalidate KV** (DELETE) on update/delete so cached reads stay correct |
+| **With KV** (`with_kv=true`) | Cache-aside: reads try KV first; writes go to Postgres and SET or DELETE KV |
 
 Toggle is a UI control (e.g. checkbox) passed on each request — session cookie or form field is fine. Same handlers in both modes; branch on the flag.
 
-**Cache-aside per operation (with KV enabled):**
+**Cache-aside per operation:**
 
-| Operation | Path |
-|-----------|------|
-| Create | INSERT Postgres → SET KV |
-| Read | GET KV → on miss, SELECT Postgres → SET KV |
-| Update | UPDATE Postgres → SET KV (or DELETE KV to invalidate) |
-| Delete | DELETE Postgres → DELETE KV |
+| Operation | with_kv=true | with_kv=false |
+|-----------|--------------|---------------|
+| Create | INSERT Postgres → SET KV | INSERT Postgres only |
+| Read | GET KV → on miss, SELECT Postgres → SET KV | SELECT Postgres only |
+| Update | UPDATE Postgres → SET KV | UPDATE Postgres → DELETE KV (invalidate) |
+| Delete | DELETE Postgres → DELETE KV | DELETE Postgres → DELETE KV (invalidate) |
 
 KV keys map to a stable string derived from the entity (e.g. row id). The KV protocol has no key enumeration; the UI does not browse the KV store — it only drives CRUD on the Postgres entity.
 
@@ -188,9 +188,11 @@ Cache-aside orchestration over `Store` + `kvclient`. Cache key: `item:{id}`. Cac
 |--------|---------------|--------------|
 | Create | PG insert | PG insert → KV SET |
 | Read | PG only | KV GET → miss → PG → KV SET |
-| Update | PG update | PG update → KV SET |
-| Delete | PG soft/hard delete | PG delete → KV DELETE |
+| Update | PG update → KV DELETE | PG update → KV SET |
+| Delete | PG delete → KV DELETE | PG delete → KV DELETE |
 | ClearCache | — | KV CLEAR |
+
+**Logging:** API runs at `LevelTrace` (same as the KV server). `ItemService` logs each cache-aside step (`PG SELECT`, `KV GET hit/miss`, `KV SET`, `KV DELETE (invalidate)`). Handlers log one Info summary per Run (op, params, ok/fail, latency; batch reads include hits/misses).
 
 ### Metrics (`internal/api`)
 
@@ -198,7 +200,7 @@ In-memory per process: last run latency, op type, status (ok/fail), batch count,
 
 ### KV Client API (`internal/api/kvclient`)
 
-TCP client to the In Memory DB. Config: `KV_ADDR` (default `localhost:55555`). One connection per call.
+TCP client to the In Memory DB. Config: `KV_ADDR` (default `localhost:55555`). One **persistent** TCP connection per `Client`, reused across commands (lazy dial, reconnect on I/O failure). A mutex serializes concurrent requests from the API.
 
 | Method | Wire command |
 |--------|--------------|

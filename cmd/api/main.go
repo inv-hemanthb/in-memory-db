@@ -20,7 +20,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := logger.New(os.Stdout, logger.LevelInfo, true)
+	log := logger.New(os.Stdout, logger.LevelTrace, true)
 
 	sqlDB, err := db.Open()
 	if err != nil {
@@ -36,6 +36,7 @@ func main() {
 		log.Error("kv client: %v", err)
 		os.Exit(1)
 	}
+	defer kv.Close()
 
 	server := api.NewServer(store, kv, log)
 

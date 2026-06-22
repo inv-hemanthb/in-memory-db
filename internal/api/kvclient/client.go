@@ -3,10 +3,12 @@ package kvclient
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/inv-hemanthb/in-memory-db/internal/db"
@@ -15,7 +17,10 @@ import (
 const defaultAddr = "localhost:55555"
 
 type Client struct {
-	addr string
+	addr   string
+	mu     sync.Mutex
+	conn   net.Conn
+	reader *bufio.Reader
 }
 
 func New(addr string) *Client {
@@ -37,6 +42,12 @@ func NewFromEnv() (*Client, error) {
 
 func (c *Client) Addr() string {
 	return c.addr
+}
+
+func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closeConnLocked()
 }
 
 func (c *Client) Set(ctx context.Context, key string, value []byte) error {
@@ -64,27 +75,76 @@ func (c *Client) Clear(ctx context.Context) error {
 }
 
 func (c *Client) roundTrip(ctx context.Context, command string) (string, error) {
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "tcp", c.addr)
-	if err != nil {
-		return "", fmt.Errorf("dial kv: %w", err)
-	}
-	defer conn.Close()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if err := conn.SetDeadline(deadlineFromContext(ctx)); err != nil {
+	for attempt := 0; attempt < 2; attempt++ {
+		payload, err := c.roundTripLocked(ctx, command)
+		if err == nil {
+			return payload, nil
+		}
+		if errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+		if errors.Is(err, ErrServerBusy) {
+			c.closeConnLocked()
+			return "", err
+		}
+		c.closeConnLocked()
+		if attempt == 1 {
+			return "", err
+		}
+	}
+
+	return "", fmt.Errorf("kv round trip failed")
+}
+
+func (c *Client) roundTripLocked(ctx context.Context, command string) (string, error) {
+	if err := c.ensureConnLocked(ctx); err != nil {
 		return "", err
 	}
 
-	if _, err := fmt.Fprintf(conn, "%s\n", command); err != nil {
+	if err := c.conn.SetDeadline(deadlineFromContext(ctx)); err != nil {
+		return "", err
+	}
+
+	if _, err := fmt.Fprintf(c.conn, "%s\n", command); err != nil {
 		return "", fmt.Errorf("write command: %w", err)
 	}
 
-	line, err := bufio.NewReader(conn).ReadString('\n')
+	line, err := c.reader.ReadString('\n')
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
 
 	return parseResponseLine(strings.TrimSuffix(line, "\n"))
+}
+
+func (c *Client) ensureConnLocked(ctx context.Context) error {
+	if c.conn != nil {
+		return nil
+	}
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "tcp", c.addr)
+	if err != nil {
+		return fmt.Errorf("dial kv: %w", err)
+	}
+
+	c.conn = conn
+	c.reader = bufio.NewReader(conn)
+	return nil
+}
+
+func (c *Client) closeConnLocked() error {
+	if c.conn == nil {
+		return nil
+	}
+
+	err := c.conn.Close()
+	c.conn = nil
+	c.reader = nil
+	return err
 }
 
 func deadlineFromContext(ctx context.Context) time.Time {

@@ -29,7 +29,7 @@ func NewServer(store *apidb.Store, kv *kvclient.Client, log *logger.Logger) *Ser
 	}
 
 	s := &Server{
-		service:   NewItemService(store, kv),
+		service:   NewItemService(store, kv, log),
 		metrics:   NewMetrics(),
 		log:       log,
 		mux:       http.NewServeMux(),

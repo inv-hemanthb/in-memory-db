@@ -31,6 +31,10 @@ func openTestClient(t *testing.T) *kvclient.Client {
 	}
 	conn.Close()
 
+	t.Cleanup(func() {
+		_ = client.Close()
+	})
+
 	return client
 }
 
@@ -59,6 +63,14 @@ func TestSetAndGet(t *testing.T) {
 	}
 	if string(got) != "alpha" {
 		t.Fatalf("get = %q, want alpha", got)
+	}
+
+	got2, err := client.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("second get: %v", err)
+	}
+	if string(got2) != "alpha" {
+		t.Fatalf("second get = %q, want alpha", got2)
 	}
 }
 
