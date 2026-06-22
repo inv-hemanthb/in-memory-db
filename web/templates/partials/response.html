@@ -1,0 +1,8 @@
+{{define "partials/response.html"}}
+<div id="result">
+  {{template "partials/result-inner" .Result}}
+</div>
+<div id="metrics" hx-swap-oob="innerHTML">
+  {{template "partials/metrics-inner" .Metrics}}
+</div>
+{{end}}

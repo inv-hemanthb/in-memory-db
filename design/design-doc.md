@@ -4,6 +4,10 @@
 
 Go learning project: custom in-memory key-value database and a driver web application. Linux only.
 
+**In Memory DB is complete and immutable** — protocol, engine, and TCP service are not changing. All new work is the driver web application and its integration with Postgres and the KV service.
+
+**Purpose of the web application:** a manual CRUD test bed (not a product demo, not a background auto load generator). The user triggers each run and sets **count** (how many iterations). **Read** supports batch: one Run executes `count` read iterations server-side (default 1, max 10000). Create, Update, Delete, and Clear cache are single operations per run. Compare latency with KV caching enabled vs Postgres alone; repeated reads show cold-cache (miss → PG) vs warm-cache (hit → KV) behavior. No authentication.
+
 ---
 
 ## System
@@ -18,7 +22,7 @@ Four components and one shared utility, as in the diagram:
 | **In Memory DB** | Standalone TCP service (`cmd/in-memory-db`) |
 | **Custom Logger** | Shared logging package (`internal/logger`) used by Backend API and In Memory DB |
 
-**Driver web application:** Frontend and Backend API are one integrated app in this repository.
+**Driver web application:** Frontend and Backend API are one integrated app in this repository. Postgres is the source of truth; the In Memory DB is a cache in front of it when caching is enabled.
 
 ### External interfaces
 
@@ -90,26 +94,171 @@ Server defaults (configurable):
 
 ---
 
+## Driver web application
+
+Manual test bed. Desktop **operations table** UI: one row per operation (Create, Read, Update, Delete, Clear cache) with inputs in table cells. The user triggers each run from the table; **Read** has a **count** field (default 1). One HTTP request per Run; the API loops reads server-side when `count` > 1 and returns an HTMX partial with the result and updated metrics. No automated benchmark runner in the UI.
+
+### KV toggle
+
+| Mode | Behavior |
+|------|----------|
+| **PG only** (`with_kv=false`) | Reads go directly to Postgres; writes go to Postgres and **invalidate KV** (DELETE) on update/delete so cached reads stay correct |
+| **With KV** (`with_kv=true`) | Cache-aside: reads try KV first; writes go to Postgres and SET or DELETE KV |
+
+Toggle is a UI control (e.g. checkbox) passed on each request — session cookie or form field is fine. Same handlers in both modes; branch on the flag.
+
+**Cache-aside per operation:**
+
+| Operation | with_kv=true | with_kv=false |
+|-----------|--------------|---------------|
+| Create | INSERT Postgres → SET KV | INSERT Postgres only |
+| Read | GET KV → on miss, SELECT Postgres → SET KV | SELECT Postgres only |
+| Update | UPDATE Postgres → SET KV | UPDATE Postgres → DELETE KV (invalidate) |
+| Delete | DELETE Postgres → DELETE KV | DELETE Postgres → DELETE KV (invalidate) |
+
+KV keys map to a stable string derived from the entity (e.g. row id). The KV protocol has no key enumeration; the UI does not browse the KV store — it only drives CRUD on the Postgres entity.
+
+### Metrics
+
+Displayed in the UI after every operation. Tracked in memory in the API process (no Postgres table for metrics).
+
+| Metric | Description |
+|--------|-------------|
+| Last op latency | Wall-clock ms for the most recent run (total ms for read batches) |
+| Op type | create / read / update / delete / clear_cache |
+| Status | ok / fail per run |
+| Batch count | Read iterations in the run (`BatchCount`; 1 for single-op runs) |
+| Cache hit/miss | On single read with KV, or aggregate hits/misses for read batches |
+| Running totals | Run count and average latency per run |
+| Recent log | Last N runs (time, op, status, count, latency, kv, cache, hits, misses) |
+
+### UI (`web/`)
+
+| Path | Role |
+|------|------|
+| `web/static/pico.min.css` | Pico.css (vendored) |
+| `web/static/app.css` | Desktop table layout overrides |
+| `web/static/htmx.min.js` | HTMX 2.0.4 (vendored) |
+| `web/templates/index.html` | Full test bed page (operations table) |
+| `web/templates/partials/` | HTMX partials (result, metrics, response) |
+
+Served at `GET /static/` and rendered via `html/template` from [`internal/api/templates.go`](internal/api/templates.go).
+
+- **Global KV toggle** — `#kv-toggle` checkbox; all forms use `hx-include="#kv-toggle"`
+- **Layout** — result panel at top, operations table in the middle, metrics panel at the bottom
+- **Operations table** — columns: Op, Count (Read only), ID, Key, Value, Hard, Action
+- **HTMX** — forms target `#result` (`outerHTML` swap); metrics updated via `hx-swap-oob` on `#metrics`; 4xx/5xx responses swap so errors (e.g. duplicate key) appear in the UI
+- **Page** — Create, Read (id/key/both, batch count), Update, Delete (soft/hard), Clear cache
+
+---
+
 ## Backend API
 
 Entry point: `cmd/api`.
 
 | Package | Role |
 |---------|------|
-| `internal/api/server` | HTTP routes; render templates |
-| `internal/api/db` | Postgres access |
+| `internal/db` | Shared Postgres connection; `.env` loading |
+| `internal/api` | HTTP server, handlers, `ItemService`, metrics (`package api`) |
+| `internal/api/db` | CRUD queries on `items` |
 | `internal/api/kvclient` | TCP client to In Memory DB |
 
-Serves HTML templates and static assets (Pico.css). HTMX drives dynamic fragments without a separate frontend build.
+Serves HTML via Go templates and static assets (Pico.css, HTMX). Templates live in `web/templates/`; static files in `web/static/`.
 
-Postgres holds application data the UI needs to persist. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
+Postgres holds the CRUD entity. KV operations go to the In Memory DB over TCP; the API does not embed the KV engine.
+
+### HTTP routes
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/` | Health placeholder |
+| `POST` | `/items` | Create (`key`, `value`, `with_kv`) |
+| `GET` | `/items/read` | Read by `id`, `key`, or both; `count` (default 1, max 10000) for batch; `with_kv` query |
+| `POST` | `/items/update` | Update (`id`, `value`, `with_kv`) |
+| `POST` | `/items/delete` | Soft/hard delete (`id`, `hard`, `with_kv`) |
+| `POST` | `/cache/clear` | Clear KV store |
+
+Config: `API_PORT` (default `8080`), `DATABASE_URL`, `KV_ADDR`.
+
+### ItemService (`internal/api`)
+
+Cache-aside orchestration over `Store` + `kvclient`. Cache key: `item:{id}`. Cached value: item `value` string.
+
+| Method | with_kv=false | with_kv=true |
+|--------|---------------|--------------|
+| Create | PG insert | PG insert → KV SET |
+| Read | PG only | KV GET → miss → PG → KV SET |
+| Update | PG update → KV DELETE | PG update → KV SET |
+| Delete | PG delete → KV DELETE | PG delete → KV DELETE |
+| ClearCache | — | KV CLEAR |
+
+**Logging:** API runs at `LevelTrace` (same as the KV server). `ItemService` logs each cache-aside step (`PG SELECT`, `KV GET hit/miss`, `KV SET`, `KV DELETE (invalidate)`). Handlers log one Info summary per Run (op, params, ok/fail, latency; batch reads include hits/misses).
+
+### Metrics (`internal/api`)
+
+In-memory per process: last run latency, op type, status (ok/fail), batch count, cache hit/miss (or batch hits/misses on read), running count/average, recent 20 entries. Recorded by handlers after each run.
+
+### KV Client API (`internal/api/kvclient`)
+
+TCP client to the In Memory DB. Config: `KV_ADDR` (default `localhost:55555`). One **persistent** TCP connection per `Client`, reused across commands (lazy dial, reconnect on I/O failure). A mutex serializes concurrent requests from the API.
+
+| Method | Wire command |
+|--------|--------------|
+| `Set(ctx, key, value)` | `SET "key" VALUE "value"` |
+| `Get(ctx, key)` | `GET "key"` |
+| `Delete(ctx, key)` | `DELETE "key"` |
+| `Clear(ctx)` | `CLEAR` |
+
+Errors: `ErrNotFound` (GET miss), `ErrServerBusy`.
+
+---
+
+## Postgres schema
+
+Single application table: `items`. Migrations live in `migrations/`; apply with `go run ./cmd/migrate`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `bigserial` PK | Internal; KV cache key = `item:{id}` |
+| `key` | `varchar(255)` | User-facing alphanumeric serial |
+| `value` | `text` | Payload |
+| `created_at` | `timestamptz` | Set on insert |
+| `updated_at` | `timestamptz` | Set on update |
+| `deleted_at` | `timestamptz` | Soft delete; `NULL` = live row |
+
+Partial unique index on `key` where `deleted_at IS NULL` — live keys are unique; keys may be reused after soft delete.
+
+**Lookups:** by `id`, by `key`, or by `id` + `key` together. All reads filter `deleted_at IS NULL`.
+
+**Seed:** `go run ./cmd/seed` inserts rows (default 500; override with `SEED_COUNT` or `-count`). Skips if enough live rows already exist.
+
+### Store API (`internal/api/db`)
+
+Postgres-only CRUD on `items`. No KV logic.
+
+| Method | Purpose |
+|--------|---------|
+| `Create(ctx, key, value)` | Insert live row |
+| `GetByID(ctx, id)` | Read by id |
+| `GetByKey(ctx, key)` | Read by key |
+| `GetByIDAndKey(ctx, id, key)` | Read with both |
+| `Update(ctx, id, value)` | Update value by id |
+| `SoftDelete(ctx, id)` | Set `deleted_at` |
+| `HardDelete(ctx, id)` | Remove row |
+
+Errors: `ErrNotFound`, `ErrDuplicateKey`.
 
 ---
 
 ## Local runtime
 
-1. `docker compose up` — Postgres  
-2. `go run ./cmd/in-memory-db` — In Memory DB  
-3. `go run ./cmd/api` — Driver web app  
+Docker Compose runs **Postgres only** — a local instance isolated from any Postgres on the host. Copy `.env.example` to `.env` and set `POSTGRES_HOST_PORT` (default `5434`) so it does not clash with other Postgres instances. The API and In Memory DB run as local Go processes.
+
+1. `cp .env.example .env` — local config (`.env` is gitignored)  
+2. `docker compose up -d` — Postgres (container only)  
+3. `go run ./cmd/migrate` — apply SQL migrations  
+4. `go run ./cmd/seed` — optional seed data  
+5. `go run ./cmd/in-memory-db` — In Memory DB  
+6. `go run ./cmd/api` — Driver web app  
 
 Module: `github.com/inv-hemanthb/in-memory-db` (Go 1.23).

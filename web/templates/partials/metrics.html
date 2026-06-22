@@ -1,0 +1,40 @@
+{{define "partials/metrics-inner"}}
+<article>
+  <header><strong>Metrics</strong></header>
+  {{if eq .TotalCount 0}}
+  <p>No operations yet.</p>
+  {{else}}
+  <p>
+    Last: {{.Last.Op}}
+    {{if gt .Last.BatchCount 1}}x{{.Last.BatchCount}}{{end}}
+    | {{formatSuccess .Last.Success}}
+    | {{.Last.LatencyMs}}ms | with_kv={{.Last.WithKV}}
+    {{if .Last.CacheHit}}| cache={{formatCacheHit .Last.CacheHit}}{{end}}
+    {{if or (gt .Last.CacheHits 0) (gt .Last.CacheMisses 0)}}| hits={{.Last.CacheHits}} misses={{.Last.CacheMisses}}{{end}}
+  </p>
+  <p>Total runs: {{.TotalCount}} | Avg latency: {{.AvgLatencyMs}}ms</p>
+  {{if .Recent}}
+  <table class="data-table">
+    <thead>
+      <tr><th>time</th><th>op</th><th>status</th><th>count</th><th>ms</th><th>kv</th><th>cache</th><th>hits</th><th>misses</th></tr>
+    </thead>
+    <tbody>
+      {{range recentReverse .Recent}}
+      <tr>
+        <td>{{.At.Format "15:04:05"}}</td>
+        <td>{{.Op}}</td>
+        <td{{if not .Success}} class="status-fail"{{end}}>{{formatSuccess .Success}}</td>
+        <td>{{.BatchCount}}</td>
+        <td>{{.LatencyMs}}</td>
+        <td>{{.WithKV}}</td>
+        <td>{{formatCacheHit .CacheHit}}</td>
+        <td>{{.CacheHits}}</td>
+        <td>{{.CacheMisses}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+  {{end}}
+</article>
+{{end}}
