@@ -11,7 +11,7 @@ Architecture and design details: [design/design-doc.md](design/design-doc.md).
 | Requirement | Version / note |
 |-------------|----------------|
 | Go | 1.23+ |
-| Docker + Compose | Postgres only |
+| Docker + Compose | Postgres (local dev) or full stack (see README) |
 | OS | Linux |
 
 ## Configuration
@@ -31,17 +31,17 @@ Edit `POSTGRES_PASSWORD` in `.env` (must match the password in `DATABASE_URL`).
 
 All `go run` commands load `.env` from the repo root. Run commands from the **repo root** (or any subdirectory under it).
 
-## Database setup
+## Database setup (local)
 
 ```bash
-docker compose up -d
+docker compose up -d postgres
 go run ./cmd/migrate
 go run ./cmd/seed          # optional, ~500 rows for read benchmarks
 ```
 
 `migrate` applies SQL files in `migrations/`. `seed` is optional.
 
-## Run the application
+## Run the application (local)
 
 Three processes — use three terminals:
 
@@ -57,6 +57,25 @@ http://localhost:8080
 ```
 
 Shutdown with Ctrl+C in each terminal (API and KV handle SIGTERM).
+
+## Run with Docker
+
+Full stack in containers (Postgres + KV + API). Migrate runs automatically on startup.
+
+```bash
+cp .env.docker.example .env   # set POSTGRES_PASSWORD
+docker compose up --build
+```
+
+Open http://localhost:8080
+
+Optional seed (manual, not on `up`):
+
+```bash
+docker compose --profile seed run --rm seed
+```
+
+For local Go development, use [Database setup (local)](#database-setup-local) and [Run the application (local)](#run-the-application-local) above (`postgres` service only).
 
 ## Using the test bed
 

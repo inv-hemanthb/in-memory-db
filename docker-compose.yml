@@ -16,5 +16,58 @@ services:
       timeout: 5s
       retries: 5
 
+  kv:
+    build:
+      context: .
+      target: kv
+    environment:
+      KV_LISTEN_ADDR: 0.0.0.0:55555
+
+  migrate:
+    build:
+      context: .
+      target: api
+    command: ["./migrate"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    ports:
+      - "${API_PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      KV_ADDR: kv:55555
+      API_PORT: "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      kv:
+        condition: service_started
+
+  seed:
+    profiles:
+      - seed
+    build:
+      context: .
+      target: api
+    command: ["./seed"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
 volumes:
   postgres_data:
