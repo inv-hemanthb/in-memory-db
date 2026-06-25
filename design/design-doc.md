@@ -252,10 +252,10 @@ Errors: `ErrNotFound`, `ErrDuplicateKey`.
 
 ## Local runtime
 
-Docker Compose runs **Postgres only** — a local instance isolated from any Postgres on the host. Copy `.env.example` to `.env` and set `POSTGRES_HOST_PORT` (default `5434`) so it does not clash with other Postgres instances. The API and In Memory DB run as local Go processes.
+Docker Compose can run the **full stack** (Postgres, KV, API) or **Postgres only** for local `go run` development. Copy `.env.docker.example` to `.env` for `docker compose up --build`; use `.env.example` for local processes. `POSTGRES_HOST_PORT` (default `5434`) avoids clashing with host Postgres. Migrate runs as a one-shot on stack startup; seed is manual (`docker compose --profile seed run --rm seed`).
 
 1. `cp .env.example .env` — local config (`.env` is gitignored)  
-2. `docker compose up -d` — Postgres (container only)  
+2. `docker compose up -d postgres` — Postgres container only  
 3. `go run ./cmd/migrate` — apply SQL migrations  
 4. `go run ./cmd/seed` — optional seed data  
 5. `go run ./cmd/in-memory-db` — In Memory DB  

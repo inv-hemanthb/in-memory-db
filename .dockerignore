@@ -1,0 +1,7 @@
+.git
+.env
+.cursor
+*.md
+!migrations/**
+design/
+postgres_data

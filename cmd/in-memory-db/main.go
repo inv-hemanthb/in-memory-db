@@ -21,7 +21,11 @@ func main() {
 	eng := engine.New(kvStore)
 	cmdHandler := tcp.NewCommandHandler(eng)
 
-	tcpServer := tcp.New("localhost:55555", log, cmdHandler.Handle)
+	listenAddr := os.Getenv("KV_LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = "localhost:55555"
+	}
+	tcpServer := tcp.New(listenAddr, log, cmdHandler.Handle)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
